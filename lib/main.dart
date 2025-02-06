@@ -1,4 +1,12 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 void main() {
   runApp(const MyApp());
@@ -54,8 +62,162 @@ class MyHomePage extends StatefulWidget {
   State<MyHomePage> createState() => _MyHomePageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
+class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   int _counter = 0;
+  WebViewController controller;
+  bool isLoading = false;
+  bool isError = false;
+  String currentUrl = '';
+  String initialUrl = 'https://flutter.dev/'; //your website url
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _initWebView();
+  }
+
+  Future<void> _initWebView() async {
+    controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(Colors.transparent)
+      ..setUserAgent('Chrome/5.0 (Linux; Android 12) Mobile Safari/537.36')
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageStarted: (url) {
+            setState(() {
+              isLoading = true;
+              isError = false;
+              currentUrl = url;
+            });
+          },
+          onPageFinished: (url) async {
+            setState(() {
+              isLoading = false;
+            });
+          },
+          onWebResourceError: (error) => _handleError(error),
+          onNavigationRequest: (request) => _handleNavigation(request),
+        ),
+      );
+
+    // Add file picker support for Android
+    if (Platform.isAndroid) {
+      final androidController = controller.platform as AndroidWebViewController;
+      await androidController.setOnShowFileSelector(_androidFilePicker);
+    }
+
+    _loadInitialUrl();
+  }
+
+  void _loadInitialUrl() async {
+    try {
+      await controller
+          .loadRequest(
+        Uri.parse('${widget.initialUrl}'),
+      )
+          .timeout(const Duration(seconds: 30), onTimeout: () {
+        if (isLoading) {
+          if (mounted) {
+            setState(() {
+              isError = true;
+              isLoading = false;
+            });
+          }
+        }
+      });
+      Future.delayed(const Duration(seconds: 60), () {
+        if (isLoading) {
+          setState(() {
+            isError = true;
+            isLoading = false;
+          });
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() => isError = true);
+      }
+    }
+  }
+
+  NavigationDecision _handleNavigation(NavigationRequest request) {
+    final uri = Uri.parse(request.url);
+    // Add authorization header to all requests
+    if (request.isMainFrame) {
+      controller.loadRequest(
+        Uri.parse(request.url),
+      );
+      return NavigationDecision.prevent;
+    }
+
+    return NavigationDecision.navigate;
+  }
+
+  void _handleError(WebResourceError error) {
+    // if (error.errorCode == -6) {
+    //   _handleTokenExpiration();
+    // } else {
+    //   setState(() => isError = true);
+    // }
+    print('Web resource error: \n ==================================\n');
+    print(error);
+    if (error.errorType == WebResourceErrorType.authentication) {
+      _handleTokenExpiration();
+    }
+    // Check if the error
+    if (((error.url != currentUrl) == true) &&
+        ((Uri.parse(error.url.toString()).host != Uri.parse(currentUrl).host) ==
+            true)) {
+      print(
+          'Ignored error Because Url: \n =========================================== \n Error code: ${error.errorCode} \n Error URL: ${error.url} \n Error Description: ${error.description}  \n $currentUrl \n ===========================================');
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        isError = true;
+      });
+    }
+  }
+
+  //webview file manager
+  Future<List<String>> _androidFilePicker(FileSelectorParams params) async {
+    try {
+      // If the input accepts images and has a capture attribute, open the camera.
+      if (params.acceptTypes.any((type) => type == 'image/*') &&
+          params.mode == FileSelectorMode.open) {
+        final picker = ImagePicker();
+        final photo = await picker.pickImage(source: ImageSource.camera);
+        if (photo == null) return [];
+        return [Uri.file(photo.path).toString()];
+      }
+      // If the input accepts video, allow video recording.
+      else if (params.acceptTypes.any((type) => type == 'video/*') &&
+          params.mode == FileSelectorMode.open) {
+        final picker = ImagePicker();
+        final video = await picker.pickVideo(
+            source: ImageSource.camera,
+            maxDuration: const Duration(seconds: 10));
+        if (video == null) return [];
+        return [Uri.file(video.path).toString()];
+      }
+      // For general file picking, use the FilePicker package.
+      else if (params.mode == FileSelectorMode.openMultiple) {
+        final result = await FilePicker.platform.pickFiles(allowMultiple: true);
+        if (result == null) return [];
+        return result.files
+            .where((file) => file.path != null)
+            .map((file) => Uri.file(file.path!).toString())
+            .toList();
+      } else {
+        final result = await FilePicker.platform.pickFiles();
+        if (result == null) return [];
+        return [Uri.file(result.files.single.path!).toString()];
+      }
+    } catch (e) {
+      return [];
+    }
+  }
 
   void _incrementCounter() {
     setState(() {
@@ -104,14 +266,8 @@ class _MyHomePageState extends State<MyHomePage> {
           // action in the IDE, or press "p" in the console), to see the
           // wireframe for each widget.
           mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
-            ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
+          children: [
+            WebViewWidget(controller: controller),
           ],
         ),
       ),
