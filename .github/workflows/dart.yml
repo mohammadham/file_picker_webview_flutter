@@ -9,7 +9,7 @@ on:
     branches: [ main, master ]
 
 env:
-  FLUTTER_VERSION: '3.19.5' # نسخه Flutter مورد استفاده
+  FLUTTER_VERSION: '3.35.2' # نسخه Flutter مورد استفاده
 
 jobs:
   analyze:
